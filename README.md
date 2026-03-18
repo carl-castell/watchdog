@@ -1,68 +1,111 @@
-# Watchdog
+# Stock Monitor
 
-Checks a product page for out-of-stock phrases and sends a Telegram alert the moment they disappear (= back in stock).
+A lightweight Python script that watches a product page for an in-stock indicator and sends a Telegram alert the moment it appears. Built to run 24/7 on a Raspberry Pi.
 
-## How It Works
+## Project Structure
 
-1. Fetches the page every ~60 seconds
-2. Searches for "sold out" and "not in stock" in the page text
-3. If those phrases disappear -> Telegram alert
-4. If they come back -> notifies you of that too
-5. Daily status report at 8 PM
+stock-monitor/
+  app.py            - Entry point, main loop, signal handling
+  config.py         - Loads .env and exposes all settings
+  messages.py       - All Telegram notification templates
+  requirements.txt
+  .env.example      - Copy to .env and fill in your values
+  core/
+    checker.py      - HTTP fetch, stock detection, retries
+    notifier.py     - Telegram sender
+    scheduler.py    - Daily report timing and uptime helper
 
 ## Setup
 
-```
-git clone https://github.com/carl-castell/watchdog.git
-cd watchdog
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-nano .env
-python stock_monitor.py
-```
+1. Clone the repo
+   git clone git@github.com:your-username/stock-monitor.git
+   cd stock-monitor
 
-## systemd Service (Raspberry Pi)
+2. Install dependencies
+   pip install -r requirements.txt
 
-Create /etc/systemd/system/watchdog.service:
+3. Configure
+   cp .env.example .env
+   (edit .env with your values)
 
-```
-[Unit]
-Description=Watchdog
-After=network-online.target
-Wants=network-online.target
+4. Run
+   python app.py
 
-[Service]
-ExecStart=/home/pi/watchdog/venv/bin/python /home/pi/watchdog/stock_monitor.py
-WorkingDirectory=/home/pi/watchdog
-Restart=always
-RestartSec=30
-User=pi
+## Configuration Reference
 
-[Install]
-WantedBy=multi-user.target
-```
+Variable              Default                    Description
+SM_URL                -                          Product page URL (required)
+SM_BOT_TOKEN          -                          Telegram bot token (required)
+SM_CHAT_ID            -                          Telegram chat ID (required)
+SM_PRODUCT_NAME       Product                    Display name in notifications
+SM_IN_STOCK_PHRASE    schema.org/instock         Text to search for on the page
+SM_INTERVAL           60                         Seconds between checks
+SM_JITTER             15                         Random extra delay (anti-bot)
+SM_TIMEOUT            20                         HTTP request timeout (seconds)
+SM_REPORT_HOUR        20                         Hour for daily report (24h)
+SM_MAX_RETRIES        3                          Retries before giving up
+SM_RETRY_BACKOFF      5                          Base seconds for backoff
+SM_ALERT_COOLDOWN     300                        Seconds between repeat alerts
+SM_USER_AGENT         Mozilla/5.0 (StockMonitor) HTTP user agent
+SM_LOG_FILE           (empty)                    Optional log file path
+
+## Deploying to Raspberry Pi
+
+First time:
+  git clone git@github.com:your-username/stock-monitor.git
+  cd stock-monitor
+  pip install -r requirements.txt
+  cp .env.example .env
+  python app.py
+
+Run as a systemd service (/etc/systemd/system/stock-monitor.service):
+
+  [Unit]
+  Description=Stock Monitor
+  After=network.target
+
+  [Service]
+  WorkingDirectory=/home/pi/stock-monitor
+  ExecStart=/usr/bin/python3 /home/pi/stock-monitor/app.py
+  Restart=always
+  User=pi
+
+  [Install]
+  WantedBy=multi-user.target
 
 Then:
-```
-sudo systemctl daemon-reload
-sudo systemctl enable watchdog
-sudo systemctl start watchdog
-journalctl -u watchdog -f
-```
+  sudo systemctl daemon-reload
+  sudo systemctl enable stock-monitor
+  sudo systemctl start stock-monitor
 
-## Configuration (.env)
+Check logs:
+  sudo journalctl -u stock-monitor -f
 
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| SM_URL | Yes | - | Product page URL |
-| SM_BOT_TOKEN | Yes | - | Telegram bot token |
-| SM_CHAT_ID | Yes | - | Telegram chat ID |
-| SM_OUT_OF_STOCK_PHRASES | | sold out,not in stock | Comma-separated phrases |
-| SM_INTERVAL | | 60 | Seconds between checks |
-| SM_JITTER | | 15 | Random extra seconds |
-| SM_REPORT_HOUR | | 20 | Daily report hour (24h) |
-| SM_MAX_RETRIES | | 3 | Retries before error alert |
-| SM_ALERT_COOLDOWN | | 300 | Min seconds between alerts |
-| SM_LOG_FILE | | empty | Log to file (optional) |
+## Updating
+
+On your PC - push changes:
+  git add .
+  git commit -m "your message"
+  git push
+
+On the Pi - pull and restart:
+  cd ~/stock-monitor
+  git pull
+  sudo systemctl restart stock-monitor
+
+Optional shortcut in ~/.bashrc on the Pi:
+  alias sm-update="cd ~/stock-monitor && git pull && sudo systemctl restart stock-monitor"
+
+Then just run: sm-update
+
+## Notifications
+
+Event               When
+Startup             Script starts
+Back in Stock       In-stock phrase detected
+Out of Stock Again  Was in stock, now gone
+Fetch Failed        All retries exhausted
+Daily Report        Every day at SM_REPORT_HOUR
+Stopped             Graceful shutdown
+
+All message text lives in messages.py - edit copy and emojis there without touching any logic.
