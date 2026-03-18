@@ -24,7 +24,7 @@ watchdog/
 
 ### 1. Clone the repo
 ```bash
-git clone git@github.com:your-username/watchdog.git
+git clone https://github.com/carl-castell/watchdog.git
 cd watchdog
 ```
 
