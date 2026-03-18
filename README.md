@@ -1,4 +1,4 @@
-# Stock Monitor
+# Watchdog
 
 A lightweight Python script that watches a product page for an in-stock indicator and sends a Telegram alert the moment it appears. Built to run 24/7 on a Raspberry Pi.
 
@@ -6,7 +6,7 @@ A lightweight Python script that watches a product page for an in-stock indicato
 
 ## Project Structure
 ```
-stock-monitor/
+watchdog/
 ├── app.py               # Entry point, main loop, signal handling
 ├── config.py            # Loads .env and exposes all settings
 ├── messages.py          # All Telegram notification templates
@@ -24,8 +24,8 @@ stock-monitor/
 
 ### 1. Clone the repo
 ```bash
-git clone git@github.com:your-username/stock-monitor.git
-cd stock-monitor
+git clone git@github.com:your-username/watchdog.git
+cd watchdog
 ```
 
 ### 2. Install dependencies
@@ -76,7 +76,7 @@ python app.py
 | `SM_MAX_RETRIES` | `3` | Retries before giving up on a check |
 | `SM_RETRY_BACKOFF` | `5` | Base seconds for exponential backoff |
 | `SM_ALERT_COOLDOWN` | `300` | Seconds between repeat in-stock alerts |
-| `SM_USER_AGENT` | `Mozilla/5.0 (StockMonitor)` | HTTP user agent string |
+| `SM_USER_AGENT` | `Mozilla/5.0 (Watchdog)` | HTTP user agent string |
 | `SM_LOG_FILE` | *(empty)* | Optional path to write logs to a file |
 
 ---
@@ -85,8 +85,8 @@ python app.py
 
 ### First time
 ```bash
-git clone git@github.com:your-username/stock-monitor.git
-cd stock-monitor
+git clone https://github.com/carl-castell/watchdog.git
+cd watchdog
 pip install -r requirements.txt
 cp .env.example .env
 # edit .env with your values
@@ -95,15 +95,15 @@ python app.py
 
 ### Run as a systemd service (auto-start on boot)
 
-Create `/etc/systemd/system/stock-monitor.service`:
+Create `/etc/systemd/system/watchdog.service`:
 ```ini
 [Unit]
-Description=Stock Monitor
+Description=Watchdog
 After=network.target
 
 [Service]
-WorkingDirectory=/home/pi/stock-monitor
-ExecStart=/usr/bin/python3 /home/pi/stock-monitor/app.py
+WorkingDirectory=/home/pi/watchdog
+ExecStart=/usr/bin/python3 /home/pi/watchdog/app.py
 Restart=always
 User=pi
 
@@ -111,4 +111,59 @@ User=pi
 WantedBy=multi-user.target
 ```
 
-Enable a
+Enable and start:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable watchdog
+sudo systemctl start watchdog
+```
+
+Check logs:
+```bash
+sudo journalctl -u watchdog -f
+```
+
+---
+
+## Updating
+
+### On your PC — push changes
+```bash
+git add .
+git commit -m "your message"
+git push
+```
+
+### On the Pi — pull and restart
+```bash
+cd ~/watchdog
+git pull
+sudo systemctl restart watchdog
+```
+
+### Optional shortcut
+
+Add to `~/.bashrc` on the Pi:
+```bash
+alias sm-update="cd ~/watchdog && git pull && sudo systemctl restart watchdog"
+```
+
+Then just run:
+```bash
+sm-update
+```
+
+---
+
+## Notifications
+
+| Event | When |
+|---|---|
+| 🔌 **Startup** | Script starts |
+| 🚨 **Back in Stock** | In-stock phrase detected |
+| 📦 **Out of Stock Again** | Was in stock, now gone |
+| ⚠️ **Fetch Failed** | All retries exhausted |
+| 📊 **Daily Report** | Every day at `SM_REPORT_HOUR` |
+| 🛑 **Stopped** | Graceful shutdown |
+
+All message text lives in `messages.py` — edit copy and emojis there without touching any logic.
