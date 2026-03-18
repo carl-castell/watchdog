@@ -1,4 +1,4 @@
-# Stock Monitor
+# Watchdog
 
 Checks a product page for out-of-stock phrases and sends a Telegram alert the moment they disappear (= back in stock).
 
@@ -13,8 +13,8 @@ Checks a product page for out-of-stock phrases and sends a Telegram alert the mo
 ## Setup
 
 ```
-git clone https://github.com/yourusername/stock-monitor.git
-cd stock-monitor
+git clone https://github.com/carl-castell/watchdog.git
+cd watchdog
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -25,17 +25,17 @@ python stock_monitor.py
 
 ## systemd Service (Raspberry Pi)
 
-Create /etc/systemd/system/stockmonitor.service:
+Create /etc/systemd/system/watchdog.service:
 
 ```
 [Unit]
-Description=Stock Monitor
+Description=Watchdog
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/home/pi/stock-monitor/venv/bin/python /home/pi/stock-monitor/stock_monitor.py
-WorkingDirectory=/home/pi/stock-monitor
+ExecStart=/home/pi/watchdog/venv/bin/python /home/pi/watchdog/stock_monitor.py
+WorkingDirectory=/home/pi/watchdog
 Restart=always
 RestartSec=30
 User=pi
@@ -47,9 +47,9 @@ WantedBy=multi-user.target
 Then:
 ```
 sudo systemctl daemon-reload
-sudo systemctl enable stockmonitor
-sudo systemctl start stockmonitor
-journalctl -u stockmonitor -f
+sudo systemctl enable watchdog
+sudo systemctl start watchdog
+journalctl -u watchdog -f
 ```
 
 ## Configuration (.env)

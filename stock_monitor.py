@@ -30,11 +30,8 @@ URL               = os.environ["SM_URL"]
 BOT_TOKEN         = os.environ["SM_BOT_TOKEN"]
 CHAT_ID           = os.environ["SM_CHAT_ID"]
 
-OUT_OF_STOCK_PHRASES = [
-    p.strip()
-    for p in os.getenv("SM_OUT_OF_STOCK_PHRASES",
-                       "sold out,not in stock").split(",")
-]
+IN_STOCK_PHRASE = os.getenv("SM_IN_STOCK_PHRASE", "schema.org/instock")
+
 
 CHECK_INTERVAL    = int(os.getenv("SM_INTERVAL", "60"))
 RANDOM_JITTER     = int(os.getenv("SM_JITTER", "15"))
@@ -82,14 +79,12 @@ def send_telegram(message):
 
 
 def check_stock():
-    """Fetch the page and return (is_in_stock, matched_phrases)."""
     headers = {"User-Agent": USER_AGENT}
     resp = requests.get(URL, headers=headers, timeout=TIMEOUT)
     resp.raise_for_status()
-    page = resp.text.lower()
-    matched = [p for p in OUT_OF_STOCK_PHRASES if p.lower() in page]
-    in_stock = len(matched) == 0
-    return in_stock, matched
+    in_stock = IN_STOCK_PHRASE.lower() in resp.text.lower()
+    return in_stock
+
 
 
 def check_with_retries():
@@ -129,11 +124,11 @@ def main():
     global _running
     now = datetime.now()
     log.info("Starting stock monitor for: %s", URL)
-    log.info("Out-of-stock phrases: %s", OUT_OF_STOCK_PHRASES)
+    log.info("In-stock phrase: %s", IN_STOCK_PHRASE)
     send_telegram(
         f"System online at {now:%Y-%m-%d %H:%M} (uptime: {get_uptime()})\n"
         f"Monitoring: {URL}\n"
-        f"Out-of-stock phrases: {OUT_OF_STOCK_PHRASES}")
+        f"In-stock phrase: {IN_STOCK_PHRASE}")
 
     was_in_stock = None
     checks = 0
@@ -144,7 +139,7 @@ def main():
     while _running:
         checks += 1
         try:
-            in_stock, matched = check_with_retries()
+            in_stock = check_with_retries()
         except Exception as exc:
             errors += 1
             log.error("Fetch failed: %s", exc)
@@ -164,9 +159,9 @@ def main():
                         log.info(msg)
                         send_telegram(msg)
                         last_alert_time = time.time()
-                    was_in_stock = True
+                was_in_stock = True
             else:
-                status = f"OUT OF STOCK (matched: {matched})"
+                status = "OUT OF STOCK"
                 if was_in_stock is None:
                     log.info("Initial check: %s", status)
                 elif was_in_stock is True:
