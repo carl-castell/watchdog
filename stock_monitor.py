@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-Stock Monitor - checks a product page for out-of-stock phrases
-and sends a Telegram alert when they disappear (= back in stock).
+Stock Monitor - checks a product page for an in-stock indicator
+and sends a Telegram alert when it appears (= back in stock).
 """
 import logging, os, random, signal, sys, time
 from datetime import datetime, timedelta
 from pathlib import Path
 import requests
 
+
+# ---------------------------------------------------------------------------
+# LOAD .env
+# ---------------------------------------------------------------------------
 
 def load_dotenv(path=".env"):
     env_path = Path(path)
@@ -26,22 +30,32 @@ def load_dotenv(path=".env"):
 
 load_dotenv()
 
-URL               = os.environ["SM_URL"]
-BOT_TOKEN         = os.environ["SM_BOT_TOKEN"]
-CHAT_ID           = os.environ["SM_CHAT_ID"]
 
-IN_STOCK_PHRASE = os.getenv("SM_IN_STOCK_PHRASE", "schema.org/instock")
+# ---------------------------------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------------------------------
 
+URL              = os.environ["SM_URL"]
+BOT_TOKEN        = os.environ["SM_BOT_TOKEN"]
+CHAT_ID          = os.environ["SM_CHAT_ID"]
+PRODUCT_NAME     = os.getenv("SM_PRODUCT_NAME", "Product")
 
-CHECK_INTERVAL    = int(os.getenv("SM_INTERVAL", "60"))
-RANDOM_JITTER     = int(os.getenv("SM_JITTER", "15"))
-TIMEOUT           = int(os.getenv("SM_TIMEOUT", "20"))
+IN_STOCK_PHRASE  = os.getenv("SM_IN_STOCK_PHRASE", "schema.org/instock")
+
+CHECK_INTERVAL   = int(os.getenv("SM_INTERVAL", "60"))
+RANDOM_JITTER    = int(os.getenv("SM_JITTER", "15"))
+TIMEOUT          = int(os.getenv("SM_TIMEOUT", "20"))
 DAILY_REPORT_HOUR = int(os.getenv("SM_REPORT_HOUR", "20"))
-MAX_RETRIES       = int(os.getenv("SM_MAX_RETRIES", "3"))
-RETRY_BACKOFF     = int(os.getenv("SM_RETRY_BACKOFF", "5"))
-ALERT_COOLDOWN    = int(os.getenv("SM_ALERT_COOLDOWN", "300"))
-USER_AGENT        = os.getenv("SM_USER_AGENT", "Mozilla/5.0 (StockMonitor)")
-LOG_FILE          = os.getenv("SM_LOG_FILE", "")
+MAX_RETRIES      = int(os.getenv("SM_MAX_RETRIES", "3"))
+RETRY_BACKOFF    = int(os.getenv("SM_RETRY_BACKOFF", "5"))
+ALERT_COOLDOWN   = int(os.getenv("SM_ALERT_COOLDOWN", "300"))
+USER_AGENT       = os.getenv("SM_USER_AGENT", "Mozilla/5.0 (StockMonitor)")
+LOG_FILE         = os.getenv("SM_LOG_FILE", "")
+
+
+# ---------------------------------------------------------------------------
+# LOGGING
+# ---------------------------------------------------------------------------
 
 log = logging.getLogger("stock_monitor")
 log.setLevel(logging.DEBUG)
@@ -54,6 +68,11 @@ if LOG_FILE:
     _fh = logging.FileHandler(LOG_FILE)
     _fh.setFormatter(_fmt)
     log.addHandler(_fh)
+
+
+# ---------------------------------------------------------------------------
+# GRACEFUL SHUTDOWN
+# ---------------------------------------------------------------------------
 
 _running = True
 
@@ -68,10 +87,73 @@ signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
 
 
+# ---------------------------------------------------------------------------
+# MESSAGES  — edit all notification text here
+# ---------------------------------------------------------------------------
+
+def msgs(event, **ctx):
+    now = ctx.get("now", datetime.now())
+
+    if event == "startup":
+        return (
+            f"\U0001f50c <b>Stock Monitor Online</b>\n"
+            f"<code>{now:%Y-%m-%d %H:%M}</code> \u2014 uptime: {ctx['uptime']}\n"
+            f"\n"
+            f"<b>Watching:</b> <a href=\"{URL}\">{PRODUCT_NAME}</a>"
+        )
+    if event == "in_stock":
+        return (
+            f"\U0001f6a8 <b>BACK IN STOCK!</b> \U0001f6a8\n"
+            f"\n"
+            f"<a href=\"{URL}\">{PRODUCT_NAME}</a>\n"
+            f"\n"
+            f"<i>GO GO GO!</i>"
+        )
+    if event == "out_of_stock_again":
+        return (
+            f"\U0001f4e6 <b>Out of Stock Again</b>\n"
+            f"<a href=\"{URL}\">{PRODUCT_NAME}</a>"
+        )
+    if event == "fetch_error":
+        return (
+            f"\u26a0\ufe0f <b>Fetch Failed</b>\n"
+            f"Retries: <code>{MAX_RETRIES}</code>\n"
+            f"Total errors: <code>{ctx['errors']}</code>\n"
+            f"<i>{ctx['exc']}</i>"
+        )
+    if event == "daily_report":
+        stock_str = (
+            "Unknown" if ctx["was_in_stock"] is None
+            else "\u2705 IN STOCK" if ctx["was_in_stock"]
+            else "\u274c Out of stock"
+        )
+        return (
+            f"\U0001f4ca <b>Daily Report</b> \u2014 <i>{now:%Y-%m-%d %H:%M}</i>\n"
+            f"\n"
+            f"<b>Product:</b> <a href=\"{URL}\">{PRODUCT_NAME}</a>\n"
+            f"<b>Status:</b> {stock_str}\n"
+            f"<b>Checks:</b> <code>{ctx['checks']}</code>\n"
+            f"<b>Errors:</b> <code>{ctx['errors']}</code>"
+        )
+    if event == "stopped":
+        return "\U0001f6d1 <b>Stock Monitor Stopped</b>"
+
+    return f"[unknown event: {event}]"
+
+
+# ---------------------------------------------------------------------------
+# HELPERS
+# ---------------------------------------------------------------------------
+
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
-        resp = requests.post(url, json={"chat_id": CHAT_ID, "text": message}, timeout=10)
+        resp = requests.post(url, json={
+            "chat_id": CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }, timeout=10)
         if resp.status_code != 200:
             log.warning("Telegram API returned %s", resp.status_code)
     except Exception as exc:
@@ -79,15 +161,14 @@ def send_telegram(message):
 
 
 def check_stock():
-    headers = {"User-Agent": USER_AGENT}
-    resp = requests.get(URL, headers=headers, timeout=TIMEOUT)
+    """Return True if the in-stock phrase is present on the page."""
+    resp = requests.get(URL, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
     resp.raise_for_status()
-    in_stock = IN_STOCK_PHRASE.lower() in resp.text.lower()
-    return in_stock
-
+    return IN_STOCK_PHRASE.lower() in resp.text.lower()
 
 
 def check_with_retries():
+    """Try up to MAX_RETRIES times with exponential backoff."""
     last_exc = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -120,15 +201,17 @@ def get_uptime():
         return "N/A"
 
 
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+
 def main():
     global _running
     now = datetime.now()
     log.info("Starting stock monitor for: %s", URL)
     log.info("In-stock phrase: %s", IN_STOCK_PHRASE)
-    send_telegram(
-        f"System online at {now:%Y-%m-%d %H:%M} (uptime: {get_uptime()})\n"
-        f"Monitoring: {URL}\n"
-        f"In-stock phrase: {IN_STOCK_PHRASE}")
+
+    send_telegram(msgs("startup", now=now, uptime=get_uptime()))
 
     was_in_stock = None
     checks = 0
@@ -138,26 +221,20 @@ def main():
 
     while _running:
         checks += 1
+
         try:
             in_stock = check_with_retries()
         except Exception as exc:
             errors += 1
             log.error("Fetch failed: %s", exc)
-            send_telegram(
-                f"Fetch failed after {MAX_RETRIES} retries (errors: {errors}): {exc}")
+            send_telegram(msgs("fetch_error", errors=errors, exc=exc))
         else:
             if in_stock:
                 status = "IN STOCK"
                 if was_in_stock is not True:
                     if time.time() - last_alert_time >= ALERT_COOLDOWN:
-                        msg = (
-                            f"\U0001f6a8 BACK IN STOCK! \U0001f6a8\n"
-                            f"\n"
-                            f"{URL}\n"
-                            f"\n"
-                            f"GO GO GO!")
-                        log.info(msg)
-                        send_telegram(msg)
+                        log.info("BACK IN STOCK!")
+                        send_telegram(msgs("in_stock"))
                         last_alert_time = time.time()
                 was_in_stock = True
             else:
@@ -166,36 +243,28 @@ def main():
                     log.info("Initial check: %s", status)
                 elif was_in_stock is True:
                     log.info("Product went back out of stock.")
-                    send_telegram(f"Product is out of stock again.\n{URL}")
+                    send_telegram(msgs("out_of_stock_again"))
                 was_in_stock = False
             log.debug("Check #%d: %s", checks, status)
 
+        # ---- daily report ----
         now = datetime.now()
         if now >= next_report:
-            if was_in_stock is None:
-                stock_str = "Unknown (no successful check yet)"
-            elif was_in_stock:
-                stock_str = "IN STOCK"
-            else:
-                stock_str = "Out of stock"
-            report = (
-                f"Daily Report ({now:%Y-%m-%d %H:%M})\n"
-                f"Status: {stock_str}\n"
-                f"Checks: {checks}\n"
-                f"Errors: {errors}")
-            log.info(report)
-            send_telegram(report)
+            log.info("Sending daily report.")
+            send_telegram(msgs("daily_report", now=now, was_in_stock=was_in_stock,
+                               checks=checks, errors=errors))
             checks = 0
             errors = 0
             next_report = next_report_time(now + timedelta(seconds=10))
 
+        # sleep in 1s increments for fast signal response
         delay = CHECK_INTERVAL + random.randint(0, RANDOM_JITTER)
         deadline = time.time() + delay
         while _running and time.time() < deadline:
             time.sleep(1)
 
     log.info("Stock monitor stopped.")
-    send_telegram("Stock monitor stopped.")
+    send_telegram(msgs("stopped"))
 
 
 if __name__ == "__main__":
