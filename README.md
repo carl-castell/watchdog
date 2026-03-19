@@ -141,18 +141,6 @@ git pull
 sudo systemctl restart watchdog
 ```
 
-### Optional shortcut
-
-Add to `~/.bashrc` on the Pi:
-```bash
-alias sm-update="cd ~/watchdog && git pull && sudo systemctl restart watchdog"
-```
-
-Then just run:
-```bash
-sm-update
-```
-
 ---
 
 ## Notifications
